@@ -1,7 +1,5 @@
 import type { FieldDef, Comp, Filter, SortState } from './types'
 
-export const STORAGE_KEY = 'comps_poc_v1'
-
 export const FIELDS: FieldDef[] = [
   { key: 'propertyName',      label: 'Property Name',     type: 'text',   col: true,  pk: true },
   { key: 'address',           label: 'Address',           type: 'text',   col: true },

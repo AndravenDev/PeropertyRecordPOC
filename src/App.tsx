@@ -3,8 +3,9 @@ import './App.css'
 import {
   FIELDS, FIELD_MAP, COL_DEFS, SEED,
   fmtMoney, fmtNum, fmtInt, fmtDate,
-  computeDerived, getView, uid, csvExport, STORAGE_KEY,
+  computeDerived, getView, uid, csvExport,
 } from './data'
+import { supabase, rowToComp, compToRow } from './supabase'
 import type { Comp, Filter, SortState, ToastItem, ToastKind, ModalState } from './types'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -197,11 +198,12 @@ function CompModal({
 }: {
   modalState: ModalState
   onClose: () => void
-  onSave: (data: Omit<Comp, 'id'>, id?: string) => void
+  onSave: (data: Omit<Comp, 'id'>, id?: string) => Promise<void>
 }) {
   const [form, setForm] = useState<FormValues>(EMPTY_FORM)
   const [errors, setErrors] = useState<Record<string, boolean>>({})
   const [formError, setFormError] = useState('')
+  const [saving, setSaving] = useState(false)
   const firstInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -213,6 +215,7 @@ function CompModal({
     }
     setErrors({})
     setFormError('')
+    setSaving(false)
     setTimeout(() => firstInputRef.current?.focus(), 60)
   }, [modalState])
 
@@ -228,7 +231,7 @@ function CompModal({
   const derivedPPA = sp > 0 && ac > 0 ? Math.round(sp / ac).toLocaleString('en-US') : ''
   const derivedPPU = sp > 0 && un > 0 ? Math.round(sp / un).toLocaleString('en-US') : ''
 
-  function handleSave() {
+  async function handleSave() {
     const required = ['propertyName', 'address', 'city', 'state']
     const errs: Record<string, boolean> = {}
     for (const k of required) {
@@ -242,26 +245,28 @@ function CompModal({
     setErrors({})
     setFormError('')
     const data: Omit<Comp, 'id'> = {
-      propertyName:      form.propertyName.trim()      || null,
-      zoningDescription: form.zoningDescription.trim() || null,
-      address:           form.address.trim()           || null,
-      city:              form.city.trim()              || null,
-      county:            form.county.trim()            || null,
+      propertyName:      form.propertyName.trim()        || null,
+      zoningDescription: form.zoningDescription.trim()   || null,
+      address:           form.address.trim()             || null,
+      city:              form.city.trim()                || null,
+      county:            form.county.trim()              || null,
       state:             form.state.trim().toUpperCase() || null,
-      zipCode:           form.zipCode.trim()           || null,
+      zipCode:           form.zipCode.trim()             || null,
       latitude:          form.latitude  ? parseFloat(form.latitude)  : null,
       longitude:         form.longitude ? parseFloat(form.longitude) : null,
-      seller:            form.seller.trim()            || null,
-      buyer:             form.buyer.trim()             || null,
-      saleDate:          form.saleDate                 || null,
+      seller:            form.seller.trim()              || null,
+      buyer:             form.buyer.trim()               || null,
+      saleDate:          form.saleDate                   || null,
       salePrice:         form.salePrice ? parseFloat(String(form.salePrice).replace(/[,$]/g, '')) : null,
-      acres:             form.acres  ? parseFloat(form.acres)  : null,
+      acres:             form.acres  ? parseFloat(form.acres)   : null,
       units:             form.units  ? parseInt(form.units, 10) : null,
-      saleRemarks:       form.saleRemarks.trim()       || null,
-      propertyRemarks:   form.propertyRemarks.trim()   || null,
+      saleRemarks:       form.saleRemarks.trim()         || null,
+      propertyRemarks:   form.propertyRemarks.trim()     || null,
     }
+    setSaving(true)
     const id = modalState?.mode === 'edit' ? modalState.comp.id : undefined
-    onSave(data, id)
+    await onSave(data, id)
+    setSaving(false)
   }
 
   if (!modalState) return null
@@ -318,20 +323,8 @@ function CompModal({
             <div className="field">
               <label>Lat / Lng</label>
               <div className="latlong-wrap">
-                <input
-                  className="mono"
-                  value={form.latitude}
-                  onChange={set('latitude')}
-                  placeholder="40.0150"
-                  inputMode="decimal"
-                />
-                <input
-                  className="mono"
-                  value={form.longitude}
-                  onChange={set('longitude')}
-                  placeholder="-105.2705"
-                  inputMode="decimal"
-                />
+                <input className="mono" value={form.latitude}  onChange={set('latitude')}  placeholder="40.0150"    inputMode="decimal" />
+                <input className="mono" value={form.longitude} onChange={set('longitude')} placeholder="-105.2705"  inputMode="decimal" />
               </div>
             </div>
 
@@ -365,20 +358,14 @@ function CompModal({
               <input className="mono" value={form.units} onChange={set('units')} inputMode="numeric" placeholder="0" />
             </div>
             <div className="field">
-              <label>
-                Price / Acre{' '}
-                <span className="hint" style={{ textTransform: 'none' }}>auto</span>
-              </label>
+              <label>Price / Acre <span className="hint" style={{ textTransform: 'none' }}>auto</span></label>
               <div className="prefix">
                 <span className="p">$</span>
                 <input className="readonly-input" value={derivedPPA} readOnly tabIndex={-1} />
               </div>
             </div>
             <div className="field">
-              <label>
-                Price / Unit{' '}
-                <span className="hint" style={{ textTransform: 'none' }}>auto</span>
-              </label>
+              <label>Price / Unit <span className="hint" style={{ textTransform: 'none' }}>auto</span></label>
               <div className="prefix">
                 <span className="p">$</span>
                 <input className="readonly-input" value={derivedPPU} readOnly tabIndex={-1} />
@@ -400,8 +387,10 @@ function CompModal({
         <div className="modal-foot">
           <span style={{ color: 'var(--danger)', fontSize: 11 }}>{formError}</span>
           <div className="spacer" />
-          <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn primary" onClick={handleSave}>Save comp</button>
+          <button className="btn" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save comp'}
+          </button>
         </div>
       </div>
     </div>
@@ -410,13 +399,9 @@ function CompModal({
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 function App() {
-  const [rows, setRows] = useState<Comp[]>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (raw) return JSON.parse(raw)
-    } catch {}
-    return SEED.map(r => ({ id: uid(), ...r } as Comp))
-  })
+  const [rows, setRows] = useState<Comp[]>([])
+  const [loading, setLoading] = useState(true)
+  const [dbStatus, setDbStatus] = useState<'connecting' | 'ready' | 'error'>('connecting')
   const [sort, setSort] = useState<SortState>({ key: 'saleDate', dir: 'desc' })
   const [filters, setFilters] = useState<Filter[]>([])
   const [search, setSearch] = useState('')
@@ -425,19 +410,34 @@ function App() {
   const [popoverAnchor, setPopoverAnchor] = useState<{ top: number; left: number } | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
 
-  // Persist to localStorage whenever rows change
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(rows)) } catch {}
-  }, [rows])
-
-  const view = useMemo(() => getView(rows, search, filters, sort), [rows, search, filters, sort])
-
   // ─ Toast helper
   const toast = useCallback((msg: string, kind: ToastKind = 'ok') => {
     const id = uid()
     setToasts(t => [...t, { id, msg, kind }])
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 2800)
   }, [])
+
+  // ─ Initial data load from Supabase
+  useEffect(() => {
+    supabase
+      .from('comps')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('Supabase error:', error)
+          setDbStatus('error')
+          toast(error.message, 'err')
+        } else {
+          setRows((data ?? []).map(rowToComp))
+          setDbStatus('ready')
+        }
+        setLoading(false)
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const view = useMemo(() => getView(rows, search, filters, sort), [rows, search, filters, sort])
 
   // ─ Keyboard shortcuts
   useEffect(() => {
@@ -451,33 +451,51 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view])
 
-  // ─ Save (add/edit)
-  function handleSave(data: Omit<Comp, 'id'>, editId?: string) {
+  // ─ Save (add / edit)
+  async function handleSave(data: Omit<Comp, 'id'>, editId?: string) {
     if (editId) {
-      setRows(rs => rs.map(r => r.id === editId ? ({ id: editId, ...data } as Comp) : r))
+      const { data: updated, error } = await supabase
+        .from('comps')
+        .update(compToRow(data))
+        .eq('id', editId)
+        .select()
+        .single()
+      if (error) { toast(error.message, 'err'); return }
+      setRows(rs => rs.map(r => r.id === editId ? rowToComp(updated) : r))
       toast(`Updated "${data.propertyName}"`, 'ok')
     } else {
-      setRows(rs => [({ id: uid(), ...data } as Comp), ...rs])
+      const { data: created, error } = await supabase
+        .from('comps')
+        .insert([compToRow(data)])
+        .select()
+        .single()
+      if (error) { toast(error.message, 'err'); return }
+      setRows(rs => [rowToComp(created), ...rs])
       toast(`Added "${data.propertyName}"`, 'ok')
     }
     setModal(null)
   }
 
   // ─ Delete single
-  function handleDelete(id: string) {
+  async function handleDelete(id: string) {
     const r = rows.find(x => x.id === id)
     if (!r) return
     if (!window.confirm(`Delete "${r.propertyName}"? This cannot be undone.`)) return
+    const { error } = await supabase.from('comps').delete().eq('id', id)
+    if (error) { toast(error.message, 'err'); return }
     setRows(rs => rs.filter(x => x.id !== id))
     setSelected(s => { const ns = new Set(s); ns.delete(id); return ns })
     toast('Record deleted', 'warn')
   }
 
   // ─ Delete selected
-  function handleDeleteSelected() {
+  async function handleDeleteSelected() {
     const n = selected.size
     if (n === 0) return
     if (!window.confirm(`Delete ${n} record${n === 1 ? '' : 's'}? This cannot be undone.`)) return
+    const ids = [...selected]
+    const { error } = await supabase.from('comps').delete().in('id', ids)
+    if (error) { toast(error.message, 'err'); return }
     setRows(rs => rs.filter(r => !selected.has(r.id)))
     setSelected(new Set())
     toast(`${n} record${n === 1 ? '' : 's'} deleted`, 'warn')
@@ -490,11 +508,19 @@ function App() {
     toast(`Exported ${view.length} rows`, 'ok')
   }
 
-  // ─ Reset
-  function handleReset() {
+  // ─ Reset to seed data
+  async function handleReset() {
     if (!window.confirm('Reset to seed data? This will replace all current records.')) return
-    const fresh = SEED.map(r => ({ id: uid(), ...r } as Comp))
-    setRows(fresh)
+    // Delete all existing rows
+    const { error: delError } = await supabase.from('comps').delete().not('id', 'is', null)
+    if (delError) { toast(delError.message, 'err'); return }
+    // Insert seed
+    const { data: inserted, error: insError } = await supabase
+      .from('comps')
+      .insert(SEED.map(compToRow))
+      .select()
+    if (insError) { toast(insError.message, 'err'); return }
+    setRows((inserted ?? []).map(rowToComp))
     setSelected(new Set())
     setFilters([])
     setSearch('')
@@ -576,13 +602,16 @@ function App() {
     }
     if (fkey === 'city')              return r.city || '—'
     if (fkey === 'state')             return <span className="tag mono">{r.state || '—'}</span>
-    if (fkey === 'zoningDescription') return r.zoningDescription ? <span className="tag">{r.zoningDescription}</span> : '—'
+    if (fkey === 'zoningDescription') return r.zoningDescription ? <span className="tag">{r.zoningDescription as string}</span> : '—'
     if (f.type === 'money')           return <span className="mono">{fmtMoney(v as number)}</span>
     if (f.type === 'number')          return <span className="mono">{fmtNum(v as number)}</span>
     if (f.type === 'int')             return <span className="mono">{fmtInt(v as number)}</span>
     if (f.type === 'date')            return <span className="mono">{fmtDate(v as string)}</span>
     return String(v ?? '—')
   }
+
+  const statusLabel = dbStatus === 'connecting' ? 'connecting…' : dbStatus === 'error' ? 'connection error' : 'ready'
+  const statusColor = dbStatus === 'error' ? 'var(--danger)' : dbStatus === 'ready' ? 'var(--ok)' : 'var(--muted)'
 
   return (
     <div className="app">
@@ -595,7 +624,10 @@ function App() {
           <div className="brand-sub">Property Records · POC</div>
         </div>
         <div className="spacer" />
-        <div className="meta">Connected to <b>localStorage</b> · ready</div>
+        <div className="meta">
+          Connected to <b>jimiodkplxarijwhzydp.supabase.co</b> ·{' '}
+          <span style={{ color: statusColor }}>{statusLabel}</span>
+        </div>
       </header>
 
       {/* ── Toolbar ── */}
@@ -665,87 +697,89 @@ function App() {
       <main>
         <div className="panel">
           <div className="table-wrap">
-            <table className="comps">
-              <thead>
-                <tr>
-                  <th style={{ width: 28, paddingLeft: 16 }}>
-                    <input
-                      ref={ckAllRef}
-                      type="checkbox"
-                      className="ck"
-                      checked={allSelected}
-                      onChange={e => handleSelectAll(e.target.checked)}
-                    />
-                  </th>
-                  {COL_DEFS.map(f => {
-                    const isNum = f.type === 'money' || f.type === 'number' || f.type === 'int'
-                    const sorted = sort.key === f.key
-                    const ind = sorted ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'
+            {loading ? (
+              <div className="empty">
+                <div style={{ color: 'var(--muted)', fontSize: 13 }}>Loading records…</div>
+              </div>
+            ) : (
+              <table className="comps">
+                <thead>
+                  <tr>
+                    <th style={{ width: 28, paddingLeft: 16 }}>
+                      <input
+                        ref={ckAllRef}
+                        type="checkbox"
+                        className="ck"
+                        checked={allSelected}
+                        onChange={e => handleSelectAll(e.target.checked)}
+                      />
+                    </th>
+                    {COL_DEFS.map(f => {
+                      const isNum = f.type === 'money' || f.type === 'number' || f.type === 'int'
+                      const sorted = sort.key === f.key
+                      const ind = sorted ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'
+                      return (
+                        <th key={f.key} className={`${isNum ? 'num' : ''} ${sorted ? 'sorted' : ''}`}>
+                          <span className="th-inner" onClick={() => handleSort(f.key)}>
+                            <span>{f.label}</span>
+                            <span className="sort-ind">{ind}</span>
+                          </span>
+                        </th>
+                      )
+                    })}
+                    <th className="actions" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {view.map(r => {
+                    const sel = selected.has(r.id)
                     return (
-                      <th
-                        key={f.key}
-                        className={`${isNum ? 'num' : ''} ${sorted ? 'sorted' : ''}`}
-                        data-key={f.key}
+                      <tr
+                        key={r.id}
+                        className={sel ? 'selected' : ''}
+                        onDoubleClick={() => setModal({ mode: 'edit', comp: r })}
                       >
-                        <span className="th-inner" onClick={() => handleSort(f.key)}>
-                          <span>{f.label}</span>
-                          <span className="sort-ind">{ind}</span>
-                        </span>
-                      </th>
+                        <td style={{ paddingLeft: 16, width: 28 }}>
+                          <input
+                            type="checkbox"
+                            className="ck row-ck"
+                            checked={sel}
+                            onChange={e => handleSelectRow(r.id, e.target.checked)}
+                          />
+                        </td>
+                        {COL_DEFS.map(f => {
+                          const isNum = f.type === 'money' || f.type === 'number' || f.type === 'int'
+                          return (
+                            <td
+                              key={f.key}
+                              className={[
+                                isNum ? 'num' : '',
+                                f.key === 'propertyName' ? 'name' : '',
+                                f.key === 'address' ? 'addr' : '',
+                              ].filter(Boolean).join(' ')}
+                            >
+                              {cellContent(r, f.key)}
+                            </td>
+                          )
+                        })}
+                        <td className="actions">
+                          <div className="row-actions">
+                            <button title="Edit" onClick={() => setModal({ mode: 'edit', comp: r })}>
+                              <IcoEdit />
+                            </button>
+                            <button title="Delete" className="del" onClick={() => handleDelete(r.id)}>
+                              <IcoTrash />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
                     )
                   })}
-                  <th className="actions" />
-                </tr>
-              </thead>
-              <tbody>
-                {view.map(r => {
-                  const sel = selected.has(r.id)
-                  return (
-                    <tr
-                      key={r.id}
-                      className={sel ? 'selected' : ''}
-                      onDoubleClick={() => setModal({ mode: 'edit', comp: r })}
-                    >
-                      <td style={{ paddingLeft: 16, width: 28 }}>
-                        <input
-                          type="checkbox"
-                          className="ck row-ck"
-                          checked={sel}
-                          onChange={e => handleSelectRow(r.id, e.target.checked)}
-                        />
-                      </td>
-                      {COL_DEFS.map(f => {
-                        const isNum = f.type === 'money' || f.type === 'number' || f.type === 'int'
-                        return (
-                          <td
-                            key={f.key}
-                            className={[
-                              isNum ? 'num' : '',
-                              f.key === 'propertyName' ? 'name' : '',
-                              f.key === 'address' ? 'addr' : '',
-                            ].filter(Boolean).join(' ')}
-                          >
-                            {cellContent(r, f.key)}
-                          </td>
-                        )
-                      })}
-                      <td className="actions">
-                        <div className="row-actions">
-                          <button title="Edit" onClick={() => setModal({ mode: 'edit', comp: r })}>
-                            <IcoEdit />
-                          </button>
-                          <button title="Delete" className="del" onClick={() => handleDelete(r.id)}>
-                            <IcoTrash />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                </tbody>
+              </table>
+            )}
 
-            {view.length === 0 && (
+            {!loading && view.length === 0 && (
               <div className="empty">
                 <IcoTable />
                 <h3>No records match your filters</h3>
