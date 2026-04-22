@@ -272,7 +272,7 @@ function CompModal({
   if (!modalState) return null
 
   const isEdit = modalState.mode === 'edit'
-  const title  = isEdit ? 'Edit comp' : 'Add comp'
+  const title  = isEdit ? 'Edit property' : 'Add property'
   const sub    = isEdit
     ? `Editing "${modalState.comp.propertyName || 'record'}"`
     : 'Enter the property details. Fields marked * are required.'
@@ -389,7 +389,7 @@ function CompModal({
           <div className="spacer" />
           <button className="btn" onClick={onClose} disabled={saving}>Cancel</button>
           <button className="btn primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save comp'}
+            {saving ? 'Saving…' : 'Save property'}
           </button>
         </div>
       </div>
@@ -471,7 +471,7 @@ function App() {
         .single()
       if (error) { toast(error.message, 'err'); return }
       setRows(rs => [rowToComp(created), ...rs])
-      toast(`Added "${data.propertyName}"`, 'ok')
+      toast(`Property "${data.propertyName}" added`, 'ok')
     }
     setModal(null)
   }
@@ -601,8 +601,8 @@ function App() {
       )
     }
     if (fkey === 'city')              return r.city || '—'
-    if (fkey === 'state')             return <span className="tag mono">{r.state || '—'}</span>
-    if (fkey === 'zoningDescription') return r.zoningDescription ? <span className="tag">{r.zoningDescription as string}</span> : '—'
+    if (fkey === 'state')             return <span className="tag state-tag">{r.state || '—'}</span>
+    if (fkey === 'zoningDescription') return r.zoningDescription ? <span className="tag zone-tag">{r.zoningDescription as string}</span> : '—'
     if (f.type === 'money')           return <span className="mono">{fmtMoney(v as number)}</span>
     if (f.type === 'number')          return <span className="mono">{fmtNum(v as number)}</span>
     if (f.type === 'int')             return <span className="mono">{fmtInt(v as number)}</span>
@@ -611,7 +611,6 @@ function App() {
   }
 
   const statusLabel = dbStatus === 'connecting' ? 'connecting…' : dbStatus === 'error' ? 'connection error' : 'ready'
-  const statusColor = dbStatus === 'error' ? 'var(--danger)' : dbStatus === 'ready' ? 'var(--ok)' : 'var(--muted)'
 
   return (
     <div className="app">
@@ -625,8 +624,8 @@ function App() {
         </div>
         <div className="spacer" />
         <div className="meta">
-          Connected to <b>jimiodkplxarijwhzydp.supabase.co</b> ·{' '}
-          <span style={{ color: statusColor }}>{statusLabel}</span>
+          <span className={`status-dot status-${dbStatus}`} />
+          {statusLabel}
         </div>
       </header>
 
@@ -655,7 +654,7 @@ function App() {
         <div className="spacer" />
         <button className="btn ghost" onClick={handleReset}>Reset data</button>
         <button className="btn primary" onClick={() => setModal({ mode: 'add' })}>
-          <IcoPlus /> Add comp
+          <IcoPlus /> Add property
         </button>
       </div>
 
